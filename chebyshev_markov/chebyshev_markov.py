@@ -1,95 +1,94 @@
 """
-Реализует класс ChebyshevMarkovFraction, который:
- - хранит коэффициенты числителя и знаменателя (полиномы Чебышева T или U),
-   плюс полюса (при необходимости),
- - предоставляет метод evaluate(x),
- - содержит статический метод approximate() для итерационной аппроксимации
-   (вызов функции iterative_chebyshev_rational_approx из core.approximation).
+chebyshev_markov.py
+
+Реализует класс ChebyshevMarkovFraction, описывающий алгебраическую дробь
+на базе полиномов Чебышева (T или U) с опциональными полюсами.
 """
 
 import numpy as np
+from typing import Union, List, Optional, Callable
 from numpy.polynomial import chebyshev as cheb
-
-# Импортируем наш итерационный метод
 from core.approximation import iterative_chebyshev_rational_approx
+
 
 class ChebyshevMarkovFraction:
     """
-    Класс, описывающий алгебраическую дробь Чебышева–Маркова:
-      R(x) = Num(x)/Den(x),
-    где Num(x) и Den(x) — линейные комбинации полиномов Чебышева (T_k или U_k),
-    а также могут учитываться полюса.
+    Класс, описывающий дробь Чебышева–Маркова:
+        R(x) = Num(x)/Den(x),
+    где Num(x) и Den(x) — линейные комбинации полиномов Чебышева (T или U),
+    с опциональными полюсами.
     """
 
-    def __init__(self, num_coeffs, den_coeffs, poles=None, kind='T'):
-        """
-        :param num_coeffs: np.ndarray
-            Коэффициенты числителя (Chebyshev). Размер deg_num+1.
-        :param den_coeffs: np.ndarray
-            Коэффициенты знаменателя (Chebyshev). Размер deg_den+1.
-        :param poles: list or np.ndarray
-            Полюса (x - p_i) для знаменателя.
-        :param kind: 'T' или 'U'
-            Какой набор полиномов (T_k, U_k).
-        """
+    def __init__(
+        self,
+        num_coeffs: Union[np.ndarray, List[float]],
+        den_coeffs: Union[np.ndarray, List[float]],
+        poles: Optional[Union[np.ndarray, List[float]]] = None,
+        kind: str = 'T'
+    ) -> None:
         self.num_coeffs = np.array(num_coeffs, dtype=float)
         self.den_coeffs = np.array(den_coeffs, dtype=float)
-        self.poles = np.array(poles) if poles is not None else np.array([])
-        self.kind = kind
+        self.poles = np.array(poles, dtype=float) if poles is not None else np.array([])
+        self.kind = kind.upper()
 
-    def evaluate(self, x):
+    def evaluate(self, x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
         """
-        Вычисляет R(x) = Num(x)/Den(x), где Num, Den ~ Chebyshev.
-        Учёт полюсов: Den(x) *= \prod (x - p_i).
+        Вычисляет R(x) = Num(x)/Den(x) с учетом полюсов.
 
-        :param x: float или np.ndarray
-        :return: float или np.ndarray
+        Аргументы:
+            x: число или np.ndarray.
+
+        Возвращает:
+            Вычисленное значение дроби.
         """
-        x_arr = np.array(x, ndmin=1, dtype=float)
+        x_arr = np.atleast_1d(np.asarray(x, dtype=float))
 
         if self.kind == 'T':
             num_vals = cheb.chebval(x_arr, self.num_coeffs)
             den_vals = cheb.chebval(x_arr, self.den_coeffs)
-        else:
-            # kind='U'
+        elif self.kind == 'U':
             num_vals = cheb.chebval(x_arr, self.num_coeffs, kind='u')
             den_vals = cheb.chebval(x_arr, self.den_coeffs, kind='u')
+        else:
+            raise ValueError(f"Недопустимый тип полиномов Чебышева: '{self.kind}' (ожидалось 'T' или 'U')")
 
         for p in self.poles:
             den_vals *= (x_arr - p)
 
         eps = 1e-15
-        den_vals = np.where(np.abs(den_vals)<eps, eps, den_vals)
+        den_vals = np.where(np.abs(den_vals) < eps, eps, den_vals)
 
         result = num_vals / den_vals
-        return result if result.size>1 else float(result[0])
+        return result if result.size > 1 else result.item()
 
     @staticmethod
     def approximate(
-        func,
-        interval=(-1,1),
-        deg_num=3,
-        deg_den=3,
-        kind='T',
-        poles=None,
-        max_iter=5,
-        tol=1e-12,
-        parallel=False
-    ):
+        func: Callable[[float], float],
+        interval: tuple = (-1, 1),
+        deg_num: int = 3,
+        deg_den: int = 3,
+        kind: str = 'T',
+        poles: Optional[List[float]] = None,
+        max_iter: int = 5,
+        tol: float = 1e-12,
+        parallel: bool = False
+    ) -> "ChebyshevMarkovFraction":
         """
-        Статический метод, создаёт ChebyshevMarkovFraction,
-        используя iterative_chebyshev_rational_approx из core.approximation.
+        Создаёт аппроксимирующую дробь Чебышева–Маркова с помощью iterative_chebyshev_rational_approx.
 
-        :param func: callable
-        :param interval: (float,float)
-        :param deg_num: int
-        :param deg_den: int
-        :param kind: 'T' or 'U'
-        :param poles: list of float
-        :param max_iter: int
-        :param tol: float
-        :param parallel: bool
-        :return: ChebyshevMarkovFraction
+        Аргументы:
+            func: аппроксимируемая функция.
+            interval: интервал аппроксимации (a, b).
+            deg_num: степень числителя.
+            deg_den: степень знаменателя.
+            kind: тип полиномов ('T' или 'U').
+            poles: список полюсов (опционально).
+            max_iter: максимальное число итераций.
+            tol: порог сходимости.
+            parallel: использовать ли параллельные вычисления.
+
+        Возвращает:
+            Экземпляр ChebyshevMarkovFraction.
         """
         num_coeffs, den_coeffs = iterative_chebyshev_rational_approx(
             func=func,

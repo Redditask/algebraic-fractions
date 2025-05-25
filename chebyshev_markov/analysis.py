@@ -1,33 +1,40 @@
 """
-Содержит функции, которые помогают:
-- сравнивать дробь с исходной функцией (строить графики),
-- рассчитывать ошибки (через utils.metrics),
-- выводить MSE, MAE и т. д.
+analysis.py
+
+Содержит функции для сравнения аппроксимирующей дроби с исходной функцией,
+построения графиков и вычисления метрик ошибок (MSE, MAE, MAX_ERR).
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
-
+from typing import Callable, Dict, Tuple
 from utils.metrics import compute_basic_metrics
+
 
 def compare_fraction_vs_function(
     fraction,
-    func,
-    interval=(-1,1),
-    num_points=200,
-    plot=True
-):
+    func: Callable[[float], float],
+    interval: Tuple[float, float] = (0, 1),
+    num_points: int = 200,
+    plot: bool = True,
+    save_fig: bool = False,
+    fig_filename: str = "comparison.png"
+) -> Dict[str, float]:
     """
-    Сравнивает fraction.evaluate(x) с func(x) на заданном интервале.
-    Вычисляет MSE, MAE, MAX_ERR.
-    Опционально строит график.
+    Строит график сравнения исходной функции и аппроксимированной дроби,
+    вычисляет и возвращает метрики ошибок.
 
-    :param fraction: ChebyshevMarkovFraction
-    :param func: callable
-    :param interval: (float,float)
-    :param num_points: int
-    :param plot: bool, если True, строим график через matplotlib
-    :return: dict, {'MSE':..., 'MAE':..., 'MAX_ERR':...}
+    Аргументы:
+        fraction: объект дроби с методом evaluate.
+        func: функция для аппроксимации.
+        interval: интервал (a, b).
+        num_points: количество точек для выборки.
+        plot: флаг отображения графика.
+        save_fig: если True, сохраняет график в файл.
+        fig_filename: имя файла для сохранения графика.
+
+    Возвращает:
+        Словарь с метриками (MSE, MAE, MAX_ERR).
     """
     x = np.linspace(interval[0], interval[1], num_points)
     y_true = np.array([func(xi) for xi in x])
@@ -38,9 +45,13 @@ def compare_fraction_vs_function(
     if plot:
         plt.figure()
         plt.plot(x, y_true, label='Исходная функция')
-        plt.plot(x, y_approx, label='Чебышев–Марков дробь')
-        plt.title(f"MSE={metrics['MSE']:.2e}, MAE={metrics['MAE']:.2e}")
+        plt.plot(x, y_approx, label='Аппроксимированная дробь')
+        plt.xlabel("x")
+        plt.ylabel("y")
+        plt.title(f"MSE={metrics.get('MSE', 0):.2e}, MAE={metrics.get('MAE', 0):.2e}")
         plt.legend()
+        if save_fig:
+            plt.savefig(fig_filename)
         plt.show()
 
     return metrics
@@ -48,21 +59,24 @@ def compare_fraction_vs_function(
 
 def error_analysis(
     fraction,
-    func,
-    interval=(-1,1),
-    num_points=200
-):
+    func: Callable[[float], float],
+    interval: Tuple[float, float] = (0, 1),
+    num_points: int = 200
+) -> Dict[str, float]:
     """
-    Возвращает словарь метрик ошибки (MSE, MAE, MAX_ERR)
-    без построения графика.
+    Вычисляет базовые метрики ошибок (MSE, MAE, MAX_ERR) для аппроксимации.
 
-    :param fraction: ChebyshevMarkovFraction
-    :param func: callable
-    :param interval: (float,float)
-    :param num_points: int
-    :return: dict
+    Аргументы:
+        fraction: объект дроби с методом evaluate.
+        func: исходная функция.
+        interval: интервал (a, b).
+        num_points: число точек для анализа.
+
+    Возвращает:
+        Словарь с метриками ошибок.
     """
     x = np.linspace(interval[0], interval[1], num_points)
     y_true = np.array([func(xi) for xi in x])
     y_approx = fraction.evaluate(x)
+
     return compute_basic_metrics(y_true, y_approx)

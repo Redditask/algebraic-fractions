@@ -1,25 +1,22 @@
 """
 demo_main.py
 
-Исправленный демо-скрипт, учитывающий корректный интервал (0..N-1) для 1D- и 2D-сжатия.
-Показываем:
+Демо-скрипт: аппроксимация, сжатие и параллельное ускорение.
 
-1) Аппроксимация sin(x) на [0, pi] (Chebyshev),
-2) Аппроксимация cos(x) на [0, pi] (Bernstein),
-3) Сжатие 1D гладкого сигнала (sin(2πi/N)+0.3 cos(5πi/N)) c Chebyshev (interval=0..N-1),
-4) Сжатие 2D (градиент) c Bernstein (строчное), очень высокая степень (12/12),
-5) heavy_func для демонстрации параллели (Bernstein).
+1) Аппроксимация sin(x) и сложных функций на [0, π] (Chebyshev и Bernstein),
+2) Сжатие 1D-сигнала (Chebyshev, интервал 0..N-1),
+3) Сжатие 2D-изображения с градиентами (Bernstein),
+4) Проверка производительности на тяжёлой функции (Bernstein + параллель).
 """
 
 import math
 import numpy as np
 import matplotlib.pyplot as plt
 
-# Чебышев–Марков
+# Аппроксимации
 from chebyshev_markov.chebyshev_markov import ChebyshevMarkovFraction
 from chebyshev_markov.analysis import compare_fraction_vs_function
 
-# Бернштейн
 from bernstein.bernstein import BernsteinFraction
 from bernstein.analysis import compare_fraction_vs_function as compare_bernstein
 
@@ -34,148 +31,173 @@ from utils.compression import (
     decompress_image_2d
 )
 
-# Хелперы
+# Хелперы и визуализация
 from utils.helpers import measure_time
 from utils.metrics import compute_basic_metrics
 from visualization.plotting import plot_signal_and_approx, plot_2d_data
 
+
 def heavy_func(x):
     """
-    "Тяжёлая" функция (~300k итераций), проверяем параллельное ускорение.
+    Тяжёлая функция для теста параллельных вычислений.
     """
     s = 0.0
     N = 300_000
     for i in range(3):
-        s += math.sin(x*(i+1))**2 + math.cos(x/(i+1))**4
+        s += math.sin(x * (i + 1)) ** 2 + math.cos(x / (i + 1)) ** 4
     for j in range(N):
-        s += math.sqrt( (j+1)*1e-10 + x*x )
+        s += math.sqrt((j + 1) * 1e-10 + x * x)
     return s
 
+
 def main():
-    # 1) sin(x) c Chebyshev–Марков
-    print("=== 1) Аппроксимация sin(x) на [0, pi] (Chebyshev) ===")
-    cm_fraction = ChebyshevMarkovFraction.approximate(
-        func=math.sin,
-        interval=(0, math.pi),
-        deg_num=8,
-        deg_den=8,
-        kind='T',
-        poles=None,
-        max_iter=15,
-        tol=1e-14,
-        parallel=True
-    )
-    metrics_cm = compare_fraction_vs_function(
-        cm_fraction, math.sin,
-        interval=(0, math.pi),
-        num_points=400,
-        plot=True
-    )
-    print("Chebyshev–Markov (sin) metrics:", metrics_cm)
-    approx_int = integrate_fraction(cm_fraction, 0, math.pi, n=300)
-    print(f"Интеграл sin(x), approx= {approx_int:.6f}, exact=2.000000")
+    # === 1. Аппроксимация функций на [0, π] с помощью дробей Чебышева–Маркова ===
+    def test_func1(x): return math.sin(x) + 0.5 * math.sin(2 * x) + 0.25 * math.sin(3 * x)
 
-    # 2) cos(x) c Bernstein
-    print("\n=== 2) Аппроксимация cos(x) на [0, pi] (Bernstein) ===")
-    bern_frac_cos = BernsteinFraction.approximate(
-        func=math.cos,
-        interval=(0, math.pi),
-        deg_num=8,
-        deg_den=8,
-        poles=None,
-        max_iter=15,
-        tol=1e-14,
-        parallel=False
+    print("=== 1.1) f₁(x) = sin(x) + 0.5·sin(2x) + 0.25·sin(3x) ===")
+    cm1 = ChebyshevMarkovFraction.approximate(
+        func=test_func1, interval=(0, math.pi), deg_num=8, deg_den=8,
+        kind='T', poles=None, max_iter=15, tol=1e-14, parallel=True
     )
-    metrics_bern_cos = compare_bernstein(
-        bern_frac_cos, math.cos,
-        interval=(0, math.pi),
-        num_points=400,
-        plot=True
-    )
-    print("Bernstein (cos) metrics:", metrics_bern_cos)
+    metrics1 = compare_fraction_vs_function(cm1, test_func1, interval=(0, math.pi), num_points=400)
+    print("Метрики f₁:", metrics1)
 
-    # 3) Сжатие 1D-гладкого сигнала (Chebyshev), interval=(0..N-1)
-    print("\n=== 3) Сжатие гладкого 1D (Chebyshev), interval=(0..N-1) ===")
+    approx_I1 = integrate_fraction(cm1, 0, math.pi, n=400)
+    print(f"Интеграл f₁, approx = {approx_I1:.6f}, exact = 2.000000\n")
+
+    def test_func2(x):
+        gauss = math.exp(-((x - math.pi / 2) ** 2) / (2 * 0.4 ** 2))
+        return gauss + 0.3 * math.cos(3 * x)
+
+    print("=== 1.2) f₂(x) = exp(...) + 0.3·cos(3x) ===")
+    cm2 = ChebyshevMarkovFraction.approximate(
+        func=test_func2, interval=(0, math.pi), deg_num=8, deg_den=8,
+        kind='T', poles=None, max_iter=15, tol=1e-14, parallel=True
+    )
+    metrics2 = compare_fraction_vs_function(cm2, test_func2, interval=(0, math.pi), num_points=400)
+    print("Метрики f₂:", metrics2)
+
+    approx_I2 = integrate_fraction(cm2, 0, math.pi, n=400)
+    print(f"Интеграл f₂, approx ≈ {approx_I2:.6f}")
+
+    # === 2. Аппроксимации с Bernstein-дробями ===
+    def test_func3(x): return math.cos(x) + 0.5 * math.cos(3 * x) + 0.3 * math.sin(5 * x)
+
+    print("\n=== 2.1) f₃(x) = cos(x) + 0.5·cos(3x) + 0.3·sin(5x) ===")
+    bern3 = BernsteinFraction.approximate(
+        func=test_func3, interval=(0, math.pi), deg_num=10, deg_den=10,
+        poles=None, max_iter=20, tol=1e-14, parallel=False
+    )
+    metrics3 = compare_bernstein(bern3, test_func3, interval=(0, math.pi), num_points=500)
+    print("Метрики f₃:", metrics3)
+
+    def test_func4(x): return math.exp(-0.3 * x) * math.sin(4 * x) + 0.2 * math.cos(7 * x)
+
+    print("\n=== 2.2) f₄(x) = exp(-0.3x)·sin(4x) + 0.2·cos(7x) ===")
+    bern4 = BernsteinFraction.approximate(
+        func=test_func4, interval=(0, math.pi), deg_num=18, deg_den=18,
+        poles=None, max_iter=25, tol=1e-14, parallel=False
+    )
+    metrics4 = compare_bernstein(bern4, test_func4, interval=(0, math.pi), num_points=500)
+    print("Метрики f₄:", metrics4)
+
+    # === 3. Сжатие сложного 1D-сигнала (Chebyshev) ===
+    print("\n=== 3) Сжатие 1D сигнала ===")
     N = 300
-    # Cоздаём x=0..N-1
     x_1d = np.arange(N, dtype=float)
 
-    def smooth_func(i):
-        # i: int or float, но округлим внутри compress_signal_1d
-        return math.sin(2*math.pi*(i/N)) + 0.3*math.cos(5*math.pi*(i/N))
+    def complex_signal(i):
+        t = i / N
+        return (
+            0.5 * math.sin(2 * math.pi * t)
+            + 0.3 * math.cos(5 * math.pi * t)
+            + 0.2 * math.sin(8 * math.pi * t) ** 2
+            + 0.001 * ((i - N / 2) ** 2) / N
+        )
 
-    # Генерируем сигнал
-    signal_1d = np.array([smooth_func(i) for i in x_1d], dtype=float)
-
-    # Сжимаем
-    frac_1d, inter_1d = compress_signal_1d(
-        signal_1d, x=x_1d,      # x=[0..N-1]
-        method='chebyshev',
-        deg_num=8,
-        deg_den=8
-    )
+    signal_1d = np.array([complex_signal(i) for i in x_1d])
+    frac_1d, inter_1d = compress_signal_1d(signal_1d, x=x_1d, method='chebyshev', deg_num=25, deg_den=25)
     restored_1d = decompress_signal_1d(frac_1d, inter_1d, N)
 
-    plot_signal_and_approx(
-        x_1d, signal_1d, restored_1d,
-        title="Сжатие 1D (гладкий), Chebyshev deg=8/8"
-    )
+    plot_signal_and_approx(x_1d, signal_1d, restored_1d, title="Сжатие 1D (Chebyshev, deg=25/25)")
     err_1d = compute_basic_metrics(signal_1d, restored_1d)
-    print("Ошибки 1D сжатия (smooth):", err_1d)
+    print("Ошибки 1D сжатия:", err_1d)
 
-    # 4) 2D-сжатие (Bernstein), deg=12/12 => почти 1:1
-    print("\n=== 4) 2D-сжатие (градиент) построчно (Bernstein, deg=12/12) ===")
+    # === 4. 2D-сжатие изображения (Bernstein) ===
+    print("\n=== 4) 2D-сжатие изображения ===")
     H, W = 80, 60
-    image = np.zeros((H,W), dtype=float)
+    cx, cy = (H - 1) / 2, (W - 1) / 2
+    image_rgb = np.zeros((H, W, 3), dtype=float)
+
     for i in range(H):
         for j in range(W):
-            # Плавный градиент, ~ [0..1.58]
-            image[i,j] = i/(H-1) + j/(W-1)
+            dist = math.hypot(i - cx, j - cy) / math.hypot(cx, cy)
+            lin = i / (H - 1)
+            diag = math.sin(2 * math.pi * (i + j) / (H + W))
+            wave = 0.5 * math.sin(2 * math.pi * i / 20) + 0.3 * math.cos(2 * math.pi * j / 15)
 
-    # degrees=12 => большое, но точнее
-    fractions_2d, size_2d = compress_image_2d(
-        image, method='bernstein',
-        deg_num=12, deg_den=12
-    )
-    restored_2d = decompress_image_2d(fractions_2d, size_2d)
-    plot_2d_data(image, restored_2d, title="2D-sжатие (Bernstein, deg=12/12)")
+            image_rgb[i, j, 0] = dist + 0.05 * (np.random.rand() - 0.5)
+            image_rgb[i, j, 1] = lin + 0.3 * diag
+            image_rgb[i, j, 2] = wave
 
-    diff_2d = image - restored_2d
-    mse_2d = np.mean(diff_2d**2)
-    print(f"2D MSE= {mse_2d:.8f}")
+    image_rgb = (image_rgb - image_rgb.min()) / (image_rgb.max() - image_rgb.min())
 
-    # 5) heavy_func
-    print("\n=== 5) Аппроксимация heavy_func(0..1) (Bernstein) ===")
-    def approximate_heavy(par):
+    # Сжатие и восстановление поканально
+    fractions_rgb = []
+    for c in range(3):
+        fracs, size = compress_image_2d(image_rgb[:, :, c], method='bernstein', deg_num=20, deg_den=20)
+        fractions_rgb.append(fracs)
+
+    restored_rgb = np.zeros_like(image_rgb)
+    for c in range(3):
+        restored_rgb[:, :, c] = decompress_image_2d(fractions_rgb[c], size)
+
+    # Визуализация
+    plt.figure(figsize=(8, 4))
+    plt.subplot(1, 2, 1)
+    plt.imshow(image_rgb)
+    plt.title("Оригинал")
+    plt.axis('off')
+
+    plt.subplot(1, 2, 2)
+    plt.imshow(restored_rgb)
+    plt.title("Восстановление")
+    plt.axis('off')
+    plt.suptitle("2D-сжатие (Bernstein)")
+    plt.show()
+
+    # Ошибки поканально
+    for c, name in zip(range(3), ['R', 'G', 'B']):
+        mse = np.mean((image_rgb[:, :, c] - restored_rgb[:, :, c]) ** 2)
+        print(f"MSE канал {name}: {mse:.2e}")
+
+    # === 5. Проверка ускорения на heavy_func ===
+    print("\n=== 5) Аппроксимация heavy_func (Bernstein) ===")
+
+    def approximate_heavy(parallel: bool):
         return BernsteinFraction.approximate(
             func=heavy_func,
-            interval=(0,1),
-            deg_num=5,
-            deg_den=5,
-            poles=None,
-            max_iter=10,
-            tol=1e-8,
-            parallel=par
+            interval=(0, 1),
+            deg_num=5, deg_den=5,
+            poles=None, max_iter=10, tol=1e-8, parallel=parallel
         )
 
     frac_no_par, t_no_par = measure_time(approximate_heavy, False)
-    print(f"heavy_func, parallel=False => time= {t_no_par:.3f} sec")
+    print(f"Время (без параллели): {t_no_par:.3f} сек")
 
     frac_par, t_par = measure_time(approximate_heavy, True)
-    print(f"heavy_func, parallel=True  => time= {t_par:.3f} sec")
+    print(f"Время (с параллелью):   {t_par:.3f} сек")
 
-    # Ошибки
-    x_test = np.linspace(0,1,50)
-    y_true = np.array([heavy_func(xv) for xv in x_test])
-    y_np   = frac_no_par.evaluate(x_test)
-    y_pp   = frac_par.evaluate(x_test)
-    mse_np = np.mean((y_true-y_np)**2)
-    mse_pp = np.mean((y_true-y_pp)**2)
-    print(f"Bernstein no_parallel MSE= {mse_np:.2e}")
-    print(f"Bernstein parallel   MSE= {mse_pp:.2e}")
+    x_test = np.linspace(0, 1, 50)
+    y_true = np.array([heavy_func(x) for x in x_test])
+    y_np = frac_no_par.evaluate(x_test)
+    y_pp = frac_par.evaluate(x_test)
+
+    print(f"MSE без параллели: {np.mean((y_true - y_np) ** 2):.2e}")
+    print(f"MSE с параллелью:  {np.mean((y_true - y_pp) ** 2):.2e}")
 
     print("\n=== Демонстрация завершена ===")
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     main()
